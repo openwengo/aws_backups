@@ -113,7 +113,7 @@ for instance in instances_list:
               bucket_monthlies.append([image, snap_list])
           
            for snap in snap_list:
-                 print("snap:", snap.id,"ami:", image.id, "instance:", inst_name)
+                 print("snap:", snap.id,"ami:", image.id, "instance:", inst_name, "created:", image.creationDate)
                  if not 'source_instance_name' in snap.tags: 
                     ec2_conn.create_tags([snap.id], {'source_instance_name': inst_name})
                  elif inst_name != snap.tags[u'source_instance_name']:
@@ -125,9 +125,9 @@ for instance in instances_list:
        bucket_dailies = sorted(bucket_dailies, compare_amis)
        bucket_weeklies = sorted(bucket_weeklies, compare_amis)
        bucket_monthlies = sorted(bucket_monthlies, compare_amis)
-       print("daily backups:", bucket_dailies)
-       print("weekly backups:", bucket_weeklies)
-       print("bucket_monthlies:", bucket_monthlies)
+       print("daily backups:", len(bucket_dailies), bucket_dailies)
+       print("weekly backups:", len(bucket_weeklies), bucket_weeklies)
+       print("bucket_monthlies:", len(bucket_monthlies), bucket_monthlies)
        if max_daily_backups > 0:
           if (len(bucket_dailies)>0):
                print (timedelta_total_seconds(today - dateutil.parser.parse(bucket_dailies[-1][0].creationDate)), " seconds elapsed since last daily backup")
@@ -160,6 +160,21 @@ for instance in instances_list:
               print("image",img_id,"has been created")
           if len(bucket_weeklies) > max_weekly_backups:
               print("We have to remove a weekly backup", bucket_weeklies[0])
+              tot_weeklies = len(bucket_weeklies)
+              tot_remove = 0
+              for backup_set in bucket_weeklies:
+                 (image, snap_list) = backup_set
+                 if timedelta_total_seconds(today - dateutil.parser.parse(image.creationDate)) > ( 86400 * 7 *  max_weekly_backups):
+                    print("De-registering image", image.id, "...")
+                    ec2_conn.deregister_image(image.id)
+                    for snap in snap_list:
+                       print("Remove snapshot", snap.id)
+                       snap.delete()
+                    
+                    tot_remove += 1
+                 if (tot_weeklies - tot_remove) <= max_weekly_backups:
+                    break
+                  
        if max_monthly_backups > 0:
           if (len(bucket_monthlies)>0):
                print ((today - dateutil.parser.parse(bucket_monthlies[-1][0].creationDate)).days, " days elapsed since last monthly backup")
