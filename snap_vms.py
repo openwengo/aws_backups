@@ -14,6 +14,8 @@ import argparse
 import time
 import signal
 from pprint import pprint
+import atexit
+import os
 
 class GracefulInterruptHandler(object):
     def __init__(self, sig=signal.SIGINT):
@@ -123,6 +125,19 @@ skip_if_fresher = int(prg_args.skip_if_fresher.strip())
 
 print("Syncing %s from %s\n" % ( src_host , src_volume) )
 
+lock_file="/dev/shm/snap_lock_%s_%s.pid" % ( src_host, src_volume.replace("/","_") )
+if os.path.exists(lock_file):
+   print("There is already a lock for this sync at %s\n" % lock_file)
+   sys.exit(2)
+else:
+   with open(lock_file, 'a') as fd:
+      fd.write("%i" % os.getpid())
+
+@atexit.register
+def remove_lock():
+   os.unlink(lock_file)
+
+
 src_volume_size=subprocess.check_output(['ssh',src_host,'get_lv_size.sh',src_volume]).strip()
 
 if src_volume_size == "":
@@ -188,6 +203,8 @@ print("I am running in %s\n" % my_instance.placement )
 
 volumes_list = ec2_conn.get_all_volumes(filters={'availability-zone':my_instance.placement,'tag:src_host':src_host,'tag:src_volume':src_volume })
 
+is_new_volume = False
+
 if len(volumes_list) > 0 :
    for v in volumes_list:
       print("Volume " + v.id + " is in my az " + " and has these tags: ")
@@ -195,6 +212,9 @@ if len(volumes_list) > 0 :
          print(tkey + " => " + tvalue + ", ")
       print("\n")
       ebs_volume = v
+      # If the volume has had a successful sync
+      # less than skip_if_fresher seconds ago
+      # just exit with status success
       if v.tags.has_key('last_sync_status'):
          if v.tags['last_sync_status'] == "0":
             if v.tags.has_key('last_sync'):
@@ -206,6 +226,7 @@ if len(volumes_list) > 0 :
 else:
    print('No ebs volume found for ' + src_host + ' - ' + src_volume + ' in az ' + my_instance.placement + '\n')
    ebs_volume = ec2_conn.create_volume(size=src_volume_size_gb, zone= my_instance.placement, volume_type='standard', encrypted=True)
+   is_new_volume = True
    print('Ebs ' + ebs_volume.id + ' created')
    ec2_conn.create_tags([ebs_volume.id], {"Name":"backup_%s_%s" % ( src_host, src_volume ), "src_host":src_host, "src_volume":src_volume, "dailybackups": nb_daily_backups, "weeklybackups": nb_weekly_backups, "monthlybackups": nb_monthly_backups, "wg_entity": wg_entity  })
    i = 0
@@ -264,7 +285,10 @@ if 1:
    start_sync_time=datetime.datetime.now(pytz.utc)
    with GracefulInterruptHandler(sig = signal.SIGINT) as h:
       with GracefulInterruptHandler(sig = signal.SIGTERM) as h2:
-         sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
+         if is_new_volume:
+            sync_status=subprocess.call(["clone_vm_from_host.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--vm-name","na"]) #,"--remote-snap-size",remote_snap_size])
+         else:
+            sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
          if h2.interrupted:
              print("Sync interrupted! (TERM)")
              ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-3})
