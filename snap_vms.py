@@ -12,7 +12,32 @@ import pytz
 import subprocess
 import argparse
 import time
+import signal
 from pprint import pprint
+
+class GracefulInterruptHandler(object):
+    def __init__(self, sig=signal.SIGINT):
+        self.sig = sig
+
+    def __enter__(self):
+        self.interrupted = False
+        self.released = False
+        self.original_handler = signal.getsignal(self.sig)
+        def handler(signum, frame):
+            self.release()
+            self.interrupted = True
+        signal.signal(self.sig, handler)
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.release()
+
+    def release(self):
+        if self.released:
+            return False
+        signal.signal(self.sig, self.original_handler)
+        self.released = True
+        return True
 
 def create_snapshot_and_wait(ebs_volume, description, tags, sleep_interval, max_sleep):
     new_snap = ebs_volume.create_snapshot(description = description )
@@ -26,6 +51,41 @@ def create_snapshot_and_wait(ebs_volume, description, tags, sleep_interval, max_
           tot_sleep += sleep_interval
           new_snap.update()
     return new_snap
+
+def detach_volume(ebs_volume, sleep_delay, max_count):
+   print("Detach volume " + ebs_volume.id + "\n" )
+   result = ebs_volume.detach()
+   i=0
+   ebs_volume.update()
+   while (i < max_count):
+     if ebs_volume.attachment_state() is not None:
+        print(str(ebs_volume.attachment_state())  + "..." )
+        time.sleep(sleep_delay)
+        ebs_volume.update()
+        i += 1
+     else:
+        break
+   print('\n')
+   if ebs_volume.attachment_state() is not None:
+      print("Detach failed. Try forcing\n")
+      result = ebs_volume.detach(force=True)
+      i=0
+      ebs_volume.update()
+      while (i < max_count):
+         if ebs_volume.attachment_state() is not None:
+            print(str(ebs_volume.attachment_state())  + "..." )
+            time.sleep(sleep_delay)
+            ebs_volume.update()
+            i += 1
+         else:
+            break
+      print('\n')
+      if ebs_volume.attachment_state() is not None:
+         print("Failed to detach volume after "+ str(max_count * sleep_delay) +"seconds\n")
+         return 7
+   else:
+      print("Detach was ok!"+ str(result) +"\n")
+   return 0
 
 def compare_snaps(snap1,snap2):
     if dateutil.parser.parse(snap1.start_time) < dateutil.parser.parse(snap2.start_time):
@@ -51,6 +111,7 @@ parser.add_argument('--src-host', required=True)
 parser.add_argument('--src-volume', required=True)
 parser.add_argument('--remote-snap-size', required=False, default="1G")
 parser.add_argument('--wg-entity', required=False, default="wengo")
+parser.add_argument('--skip-if-fresher', required=False, default="40000")
 
 prg_args = parser.parse_args()
 
@@ -58,6 +119,7 @@ src_host = prg_args.src_host.strip()
 src_volume = prg_args.src_volume.strip()
 remote_snap_size = prg_args.remote_snap_size.strip()
 wg_entity = prg_args.wg_entity.strip()
+skip_if_fresher = int(prg_args.skip_if_fresher.strip())
 
 print("Syncing %s from %s\n" % ( src_host , src_volume) )
 
@@ -133,6 +195,14 @@ if len(volumes_list) > 0 :
          print(tkey + " => " + tvalue + ", ")
       print("\n")
       ebs_volume = v
+      if v.tags.has_key('last_sync_status'):
+         if v.tags['last_sync_status'] == "0":
+            if v.tags.has_key('last_sync'):
+               last_sync_dt = dateutil.parser.parse(v.tags['last_sync'])
+               now_dt=datetime.datetime.now(pytz.utc)
+               if (now_dt - last_sync_dt).seconds < skip_if_fresher:
+                  print("Last sync happened " + str((now_dt - last_sync_dt).seconds) + " seconds ago which is less than " + str(skip_if_fresher))
+                  sys.exit(0)
 else:
    print('No ebs volume found for ' + src_host + ' - ' + src_volume + ' in az ' + my_instance.placement + '\n')
    ebs_volume = ec2_conn.create_volume(size=src_volume_size_gb, zone= my_instance.placement, volume_type='standard', encrypted=True)
@@ -190,8 +260,23 @@ sync_status=-1
 if 1:
    print("Calling sync_block.sh\n")
    ec2_conn.create_tags([ebs_volume.id], {"sync_in_progress":"True"})
+   ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-1})
    start_sync_time=datetime.datetime.now(pytz.utc)
-   sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
+   with GracefulInterruptHandler(sig = signal.SIGINT) as h:
+      with GracefulInterruptHandler(sig = signal.SIGTERM) as h2:
+         sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
+         if h2.interrupted:
+             print("Sync interrupted! (TERM)")
+             ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-3})
+             res_detach = detach_volume(ebs_volume, sleep_delay, max_count)
+             sys.exit(10)
+      if h.interrupted:
+          print("Sync interrupted! (INT)")
+          ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-2})
+          res_detach = detach_volume(ebs_volume, sleep_delay, max_count)
+          sys.exit(9)
+           
+           
    end_sync_time=datetime.datetime.now(pytz.utc)
    ec2_conn.create_tags([ebs_volume.id], {"sync_in_progress":"False"})
    ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":sync_status})
@@ -200,38 +285,11 @@ if 1:
 
 now_str=str(datetime.datetime.now(pytz.utc))
 ec2_conn.create_tags([ebs_volume.id], {"last_sync":now_str})
-print("Detach volume " + ebs_volume.id + "\n" )
-result = ebs_volume.detach()
-i=0
-ebs_volume.update()
-while (i < max_count):
-   if ebs_volume.attachment_state() is not None:
-      print(str(ebs_volume.attachment_state())  + "..." )
-      time.sleep(sleep_delay)
-      ebs_volume.update()
-      i += 1
-   else:
-      break
-print('\n')
-if ebs_volume.attachment_state() is not None:
-   print("Detach failed. Try forcing\n")
-   result = ebs_volume.detach(force=True)
-   i=0
-   ebs_volume.update()
-   while (i < max_count):
-      if ebs_volume.attachment_state() is not None:
-         print(str(ebs_volume.attachment_state())  + "..." )
-         time.sleep(sleep_delay)
-         ebs_volume.update()
-         i += 1
-      else:
-         break
-   print('\n')
-   if ebs_volume.attachment_state() is not None:
-      print("Failed to detach volume after "+ str(max_count * sleep_delay) +"seconds\n")
-      sys.exit(7)
-else:
-   print("Detach was ok!"+ str(result) +"\n")
+
+res_detach = detach_volume(ebs_volume, sleep_delay, max_count)
+if res_detach != 0:
+   print("ERROR: detach failed with code " + str(res_detach))
+   sys.exit(7)
 
 if sync_status <> 0:
    print("Sync status is not success. No snapshots\n")
@@ -293,7 +351,7 @@ try:
             print ((today - dateutil.parser.parse(bucket_weeklies[-1].start_time)).days, " days elapsed since last weekly backup")
        if (len(bucket_weeklies) == 0) or (len(bucket_weeklies)>0) and ( (today - dateutil.parser.parse(bucket_weeklies[-1].start_time)).days > 6 ) :
            print("We have to generate a weekly backup")
-           new_snap = create_snapshot_and_wait(ebs_volume, "Backup (weekly) of volume %s of host %s last synched at %s" % ( src_volume, src_host, now_str ), {"src_host":src_host, "src_volume":src_volume, "is_weeklybackup": now_str, "wg_entity":wg_entity }, (snapshot_sleep_delay / 11) + 1, snapshot_sleep_delay )
+           new_snap = create_snapshot_and_wait(ebs_volume, "Backup (weekly) of volume %s of host %s last synched at %s" % ( src_volume, src_host, now_str ), {"src_host":src_host, "src_volume":src_volume, "is_weeklybackup": now_str, "wg_entity":wg_entity }, (snapshot_sleep_delay / 10) + 1, snapshot_sleep_delay )
        if len(bucket_weeklies) > max_weekly_backups:
            print("We have to remove a weekly backup")
            tot_weeklies = len(bucket_weeklies)
