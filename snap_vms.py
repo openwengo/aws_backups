@@ -100,6 +100,42 @@ def timedelta_total_seconds(timedelta):
         timedelta.microseconds + 0.0 +
         (timedelta.seconds + timedelta.days * 24 * 3600) * 10 ** 6) / 10 ** 6
 
+
+def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, sleep_delay, max_count):
+   is_attached=False
+   while (not is_attached and device_letter < 'z'):
+      last_device_ascii = ord(device_letter)
+      last_device = "/dev/sd%s" % chr(last_device_ascii)
+      print("Attach " + ebs_volume.id + " to " + last_device )
+      try:
+         result = ec2_conn.attach_volume(ebs_volume.id, my_instance_id, last_device)
+      except EC2ResponseError as e:
+         if "is already in use" in e.Message:
+            device_letter = char(last_device_ascii + 1)
+      is_attached = True
+   ebs_device = last_device
+   if not is_attached:
+      print("ERROR: Volume attach failed with result: " + result + " Bailing out.\n")
+      sys.exit(5)
+   print 'Attach Volume Result: ', result
+   i=0
+   ebs_volume.update()
+   while (i < max_count):
+       if ebs_volume.attachment_state() != "attached":
+          print(str(ebs_volume.attachment_state())  + "..." )
+          time.sleep(sleep_delay)
+          ebs_volume.update()
+          i += 1
+       else:
+          break
+   print('\n')
+   if ebs_volume.attachment_state() != "attached":
+      print("ERROR: Volume did not attach after " + str( max_count * sleep_delay ) + " seconds. Bailing out.\n")
+      sys.exit(5)
+   return (last_device_ascii,last_device)
+
+
+
 max_count = 10
 sleep_delay = 6
 snapshot_sleep_delay = 300
@@ -220,8 +256,8 @@ if len(volumes_list) > 0 :
             if v.tags.has_key('last_sync'):
                last_sync_dt = dateutil.parser.parse(v.tags['last_sync'])
                now_dt=datetime.datetime.now(pytz.utc)
-               if (now_dt - last_sync_dt).seconds < skip_if_fresher:
-                  print("Last sync happened " + str((now_dt - last_sync_dt).seconds) + " seconds ago which is less than " + str(skip_if_fresher))
+               if timedelta_total_seconds(now_dt - last_sync_dt) < skip_if_fresher:
+                  print("Last sync happened " + str(timedelta_total_seconds(now_dt - last_sync_dt)) + " seconds ago which is less than " + str(skip_if_fresher))
                   sys.exit(0)
 else:
    print('No ebs volume found for ' + src_host + ' - ' + src_volume + ' in az ' + my_instance.placement + '\n')
@@ -257,25 +293,7 @@ for device, ebs in iter(sorted(my_instance.block_device_mapping.items())):
       last_device = "/dev/sd%s" % chr(last_device_ascii)
 
 if not ebs_device:
-   print("Attach " + ebs_volume.id + " to " + last_device )
-   result = ec2_conn.attach_volume(ebs_volume.id, my_instance_id, last_device)
-   ebs_device = last_device
-   print 'Attach Volume Result: ', result
-   i=0
-   ebs_volume.update()
-   while (i < max_count):
-       if ebs_volume.attachment_state() != "attached":
-          print(str(ebs_volume.attachment_state())  + "..." )
-          time.sleep(sleep_delay)
-          ebs_volume.update()
-          i += 1
-       else:
-          break
-   print('\n')
-   if ebs_volume.attachment_state() != "attached":
-      print("ERROR: Volume did not attach after " + str( max_count * sleep_delay ) + " seconds. Bailing out.\n")
-      sys.exit(5)
-
+   (last_device_ascii, last_device) =  attach_volume_at_letter_or_more(ebs_volume, my_instance_id, chr(last_device_ascii), sleep_delay, max_count)
 
 sync_status=-1
 if 1:
