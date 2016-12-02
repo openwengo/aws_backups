@@ -25,10 +25,11 @@ def compare_amis(ami1,ami2):
     else:
        return 1
 
-def generate_image(ec2_conn,instance, period, today):
+def generate_image(ec2_conn,instance, period, today, wg_entity):
    inst_name =  instance.tags[u'Name']
    img_name = "wengo-%s-%s-%s" % ( inst_name, period, today.strftime("%d-%m-%Y"))
    img_id = ec2_conn.create_image(instance_id = instance.id, name = img_name, description = img_name , no_reboot = True, block_device_mapping = None, dry_run = False )
+   ec2_conn.create_tags([img_id], {'wg_entity': wg_entity})
    return img_id
 
 def timedelta_total_seconds(timedelta):
@@ -95,6 +96,10 @@ for instance in instances_list:
            max_weekly_backups = int(instance.tags[u'weeklybackups'])
        if 'monthlybackups' in instance.tags:
            max_monthly_backups = int(instance.tags[u'monthlybackups'])
+       if 'wg_entity' in instance.tags:
+           wg_entity = instance.tags[u'wg_entity']
+       else:
+           wg_entity = 'wengo'
        print("Instance can have %i daily, %i weekly and %i monthly backups" % (max_daily_backups, max_weekly_backups, max_monthly_backups) )
        for image in images_list:
          # ignore failed amis
@@ -114,6 +119,7 @@ for instance in instances_list:
           
            for snap in snap_list:
                  print("snap:", snap.id,"ami:", image.id, "instance:", inst_name, "created:", image.creationDate)
+                 # fix tagging a posteriori
                  if not 'source_instance_name' in snap.tags: 
                     ec2_conn.create_tags([snap.id], {'source_instance_name': inst_name})
                  elif inst_name != snap.tags[u'source_instance_name']:
@@ -122,6 +128,10 @@ for instance in instances_list:
                     ec2_conn.create_tags([snap.id], {'source_ami': image.id})
                  elif image.id != snap.tags[u'source_ami']:
                     ec2_conn.create_tags([snap.id], {'source_ami': image.id})
+                 elif not 'wg_entity' in snap.tags:
+                    ec2_conn.create_tags([snap.id], {'wg_entity': wg_entity})
+                 elif wg_entity != snap.tags[u'wg_entity']:
+                    ec2_conn.create_tags([snap.id], {'wg_entity': wg_entity})
        bucket_dailies = sorted(bucket_dailies, compare_amis)
        bucket_weeklies = sorted(bucket_weeklies, compare_amis)
        bucket_monthlies = sorted(bucket_monthlies, compare_amis)
@@ -133,7 +143,7 @@ for instance in instances_list:
                print (timedelta_total_seconds(today - dateutil.parser.parse(bucket_dailies[-1][0].creationDate)), " seconds elapsed since last daily backup")
           if (len(bucket_dailies) == 0) or (len(bucket_dailies)>0) and ( timedelta_total_seconds(today - dateutil.parser.parse(bucket_dailies[-1][0].creationDate)) > 83000 ) :
               print("We have to generate a daily backup")
-              img_id = generate_image(ec2_conn,instance, "daily", today)
+              img_id = generate_image(ec2_conn=ec2_conn,instance=instance, period="daily", today=today, wg_entity=wg_entity)
           if len(bucket_dailies) > max_daily_backups:
               print("We have to remove a daily backups")
               tot_dailies = len(bucket_dailies)
@@ -156,7 +166,7 @@ for instance in instances_list:
                print ((today - dateutil.parser.parse(bucket_weeklies[-1][0].creationDate)).days, " days elapsed since last weekly backup")
           if (len(bucket_weeklies) == 0) or (len(bucket_weeklies)>0) and ( (today - dateutil.parser.parse(bucket_weeklies[-1][0].creationDate)).days > 6 ) :
               print("We have to generate a weekly backup")
-              img_id = generate_image(ec2_conn,instance, "weekly", today)
+              img_id = generate_image(ec2_conn=ec2_conn,instance=instance, period="weekly", today=today, wg_entity=wg_entity)
               print("image",img_id,"has been created")
           if len(bucket_weeklies) > max_weekly_backups:
               print("We have to remove a weekly backup", bucket_weeklies[0])
@@ -180,7 +190,7 @@ for instance in instances_list:
                print ((today - dateutil.parser.parse(bucket_monthlies[-1][0].creationDate)).days, " days elapsed since last monthly backup")
           if (len(bucket_monthlies) == 0) or (len(bucket_monthlies)>0) and ( (today - dateutil.parser.parse(bucket_monthlies[-1][0].creationDate)).days > 30 ) :
               print("We have to generate a monthly backup")
-              img_id = generate_image(ec2_conn,instance, "monthly", today)
+              img_id = generate_image(ec2_conn=ec2_conn,instance=instance, period="monthly", today=today, wg_entity=wg_entity)
               print("image",img_id,"has been created")
           if len(bucket_monthlies) > max_monthly_backups:
               print("We have to remove a monthly backup", bucket_monthlies[0])
