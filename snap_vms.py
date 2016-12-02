@@ -109,8 +109,8 @@ def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, s
       print("Attach " + ebs_volume.id + " to " + last_device )
       try:
          result = ec2_conn.attach_volume(ebs_volume.id, my_instance_id, last_device)
-      except EC2ResponseError as e:
-         if "is already in use" in e.Message:
+      except boto.exception.EC2ResponseError as e:
+         if "is already in use" in e.error_message:
             device_letter = char(last_device_ascii + 1)
       is_attached = True
    ebs_device = last_device
@@ -163,7 +163,7 @@ print("Syncing %s from %s\n" % ( src_host , src_volume) )
 
 lock_file="/dev/shm/snap_lock_%s_%s.pid" % ( src_host, src_volume.replace("/","_") )
 if os.path.exists(lock_file):
-   print("There is already a lock for this sync at %s\n" % lock_file)
+   print("ERROR: There is already a lock for this sync at %s\n" % lock_file)
    sys.exit(2)
 else:
    with open(lock_file, 'a') as fd:
@@ -242,6 +242,9 @@ volumes_list = ec2_conn.get_all_volumes(filters={'availability-zone':my_instance
 is_new_volume = False
 
 if len(volumes_list) > 0 :
+   if len(volumes_list) > 1:
+      print('ERROR: there are ' + str(len(volumes_list)) + ' volume for ' + src_host + ' and ' + src_volume + ' in ' + my_instance.placement + '. Clean the superflous volume(s) and run again')
+      sys.exit(6)
    for v in volumes_list:
       print("Volume " + v.id + " is in my az " + " and has these tags: ")
       for tkey,tvalue in v.tags.iteritems():
@@ -259,6 +262,28 @@ if len(volumes_list) > 0 :
                if timedelta_total_seconds(now_dt - last_sync_dt) < skip_if_fresher:
                   print("Last sync happened " + str(timedelta_total_seconds(now_dt - last_sync_dt)) + " seconds ago which is less than " + str(skip_if_fresher))
                   sys.exit(0)
+      if v.size < src_volume_size_gb:
+         print('Volume is too small! ' + str(v.size) + 'GB vs ' + str(src_volume_size_gb) + ' Required')
+         enlarge_snap = create_snapshot_and_wait(ebs_volume, "Temporary snapshot of volume %s of host %s" % ( src_volume, src_host ), {"src_host":src_host, "src_volume":src_volume, "wg_entity":wg_entity }, (snapshot_sleep_delay / 10) + 1, snapshot_sleep_delay * 10)
+         if ( enlarge_snap.status != 'completed' ):
+          print("ERROR: Snapshot is not finished after " + str( snapshot_sleep_delay * 10 ) + " seconds. Bail out")
+          sys.exit(8)
+         ebs_new_volume = ec2_conn.create_volume(size=src_volume_size_gb, zone= my_instance.placement, volume_type='standard', encrypted=True, snapshot = enlarge_snap )
+         print('Ebs ' + ebs_new_volume.id + ' created as a resize of ' + ebs_volume.id)
+         ec2_conn.create_tags([ebs_new_volume.id], ebs_volume.tags )
+         i = 0
+         while ebs_new_volume.status != "available":
+            if i > max_count * 10:
+               break
+            time.sleep(sleep_delay)
+            ebs_new_volume.update()
+            i+=1
+         if ebs_new_volume.status != "available":
+            print("ERROR: Volume " + ebs_new_volume.id + " unavailable after " + str(sleep_delay * max_count * 10) + " seconds. Exit\n")
+            sys.exit(6)
+         ec2_conn.delete_volume(ebs_volume.id)
+         ebs_volume = ebs_new_volume
+
 else:
    print('No ebs volume found for ' + src_host + ' - ' + src_volume + ' in az ' + my_instance.placement + '\n')
    ebs_volume = ec2_conn.create_volume(size=src_volume_size_gb, zone= my_instance.placement, volume_type='standard', encrypted=True)
@@ -273,7 +298,7 @@ else:
       ebs_volume.update()
       i+=1
    if ebs_volume.status != "available":
-      print("Volume " + ebs_volume.id + " unavailable after " + str(sleep_delay * max_count) + " seconds. Exit\n")
+      print("ERROR: Volume " + ebs_volume.id + " unavailable after " + str(sleep_delay * max_count) + " seconds. Exit\n")
       sys.exit(6)
 
 ebs_device = None
@@ -308,12 +333,12 @@ if 1:
          else:
             sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
          if h2.interrupted:
-             print("Sync interrupted! (TERM)")
+             print("ERROR: Sync interrupted! (TERM)")
              ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-3})
              res_detach = detach_volume(ebs_volume, sleep_delay, max_count)
              sys.exit(10)
       if h.interrupted:
-          print("Sync interrupted! (INT)")
+          print("ERROR: Sync interrupted! (INT)")
           ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-2})
           res_detach = detach_volume(ebs_volume, sleep_delay, max_count)
           sys.exit(9)
@@ -334,7 +359,7 @@ if res_detach != 0:
    sys.exit(7)
 
 if sync_status <> 0:
-   print("Sync status is not success. No snapshots\n")
+   print("ERROR: Sync status is not success. No snapshots\n")
    sys.exit(8)
 
 snapshots_list = ec2_conn.get_all_snapshots( owner = 'self', filters={'volume-id': ebs_volume.id })
