@@ -109,10 +109,10 @@ def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, s
       print("Attach " + ebs_volume.id + " to " + last_device )
       try:
          result = ec2_conn.attach_volume(ebs_volume.id, my_instance_id, last_device)
+         is_attached = True
       except boto.exception.EC2ResponseError as e:
          if "is already in use" in e.error_message:
-            device_letter = char(last_device_ascii + 1)
-      is_attached = True
+            device_letter = chr(last_device_ascii + 1)
    ebs_device = last_device
    if not is_attached:
       print("ERROR: Volume attach failed with result: " + result + " Bailing out.\n")
