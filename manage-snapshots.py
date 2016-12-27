@@ -37,6 +37,22 @@ def timedelta_total_seconds(timedelta):
         timedelta.microseconds + 0.0 +
         (timedelta.seconds + timedelta.days * 24 * 3600) * 10 ** 6) / 10 ** 6
 
+def purge_images(bucket_images, max_image_age_in_seconds , max_backups ):
+   tot_backups = len(bucket_images)
+   tot_remove = 0
+   for backup_set in bucket_images:
+      (image, snap_list) = backup_set
+      if timedelta_total_seconds(today - dateutil.parser.parse(image.creationDate)) > ( max_image_age_in_seconds ):
+          print("De-registering image", image.id, "...")
+          ec2_conn.deregister_image(image.id)
+          for snap in snap_list:
+             print("Remove snapshot", snap.id)
+             snap.delete()
+                    
+          tot_remove += 1
+          if (tot_backups - tot_remove) <= max_backups:
+             break
+
 # Get settings from config.py
 aws_access_key = config['aws_access_key']
 aws_secret_key = config['aws_secret_key']
@@ -146,20 +162,7 @@ for instance in instances_list:
               img_id = generate_image(ec2_conn=ec2_conn,instance=instance, period="daily", today=today, wg_entity=wg_entity)
           if len(bucket_dailies) > max_daily_backups:
               print("We have to remove a daily backups")
-              tot_dailies = len(bucket_dailies)
-              tot_remove = 0
-              for backup_set in bucket_dailies:
-                 (image, snap_list) = backup_set
-                 if timedelta_total_seconds(today - dateutil.parser.parse(image.creationDate)) > ( 86400 * max_daily_backups):
-                    print("De-registering image", image.id, "...")
-                    ec2_conn.deregister_image(image.id)
-                    for snap in snap_list:
-                       print("Remove snapshot", snap.id)
-                       snap.delete()
-                    
-                    tot_remove += 1
-                 if (tot_dailies - tot_remove) <= max_daily_backups:
-                    break
+              purge_images(bucket_dailies, 86400 *  max_daily_backups , max_daily_backups )
                   
        if max_weekly_backups > 0:
           if (len(bucket_weeklies)>0):
@@ -170,20 +173,7 @@ for instance in instances_list:
               print("image",img_id,"has been created")
           if len(bucket_weeklies) > max_weekly_backups:
               print("We have to remove a weekly backup", bucket_weeklies[0])
-              tot_weeklies = len(bucket_weeklies)
-              tot_remove = 0
-              for backup_set in bucket_weeklies:
-                 (image, snap_list) = backup_set
-                 if timedelta_total_seconds(today - dateutil.parser.parse(image.creationDate)) > ( 86400 * 7 *  max_weekly_backups):
-                    print("De-registering image", image.id, "...")
-                    ec2_conn.deregister_image(image.id)
-                    for snap in snap_list:
-                       print("Remove snapshot", snap.id)
-                       snap.delete()
-                    
-                    tot_remove += 1
-                 if (tot_weeklies - tot_remove) <= max_weekly_backups:
-                    break
+              purge_images(bucket_weeklies, 86400 * 7 *  max_weekly_backups , max_weekly_backups )
                   
        if max_monthly_backups > 0:
           if (len(bucket_monthlies)>0):
@@ -194,6 +184,7 @@ for instance in instances_list:
               print("image",img_id,"has been created")
           if len(bucket_monthlies) > max_monthly_backups:
               print("We have to remove a monthly backup", bucket_monthlies[0])
+              purge_images(bucket_monthlies, 86400 * 30 *  max_monthly_backups , max_monthly_backups )
    except Exception as e:
       print("Error: ", e)
       raise
