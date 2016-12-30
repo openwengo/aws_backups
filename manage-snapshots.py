@@ -29,7 +29,7 @@ def generate_image(ec2_conn,instance, period, today, wg_entity):
    inst_name =  instance.tags[u'Name']
    img_name = "wengo-%s-%s-%s" % ( inst_name, period, today.strftime("%d-%m-%Y"))
    img_id = ec2_conn.create_image(instance_id = instance.id, name = img_name, description = img_name , no_reboot = True, block_device_mapping = None, dry_run = False )
-   ec2_conn.create_tags([img_id], {'wg_entity': wg_entity})
+   ec2_conn.create_tags([img_id], {'wg_entity': wg_entity, 'instance': inst_name, 'period': period })
    return img_id
 
 def timedelta_total_seconds(timedelta):
