@@ -255,7 +255,7 @@ if 1:
             ebs_volume.update()
             i+=1
          if ebs_volume.status != "available":
-            print("ERROR: Volume " + ebs_new_volume.id + " unavailable after " + str(sleep_delay * max_count * 10) + " seconds. Exit\n")
+            print("ERROR: Volume " + ebs_volume.id + " unavailable after " + str(sleep_delay * max_count * 10) + " seconds. Exit\n")
             sys.exit(6)
 
 ebs_device = None
@@ -290,6 +290,6 @@ if res_detach != 0:
    print("ERROR: detach failed with code " + str(res_detach))
    sys.exit(7)
 
-
+print("VOLUME_ID: %s" % ebs.volume_id )
 
 sys.exit(0)
