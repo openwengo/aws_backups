@@ -290,6 +290,6 @@ if res_detach != 0:
    print("ERROR: detach failed with code " + str(res_detach))
    sys.exit(7)
 
-print("VOLUME_ID: %s" % ebs.volume_id )
+print("VOLUME_ID: %s" % ebs_volume.id )
 
 sys.exit(0)
