@@ -137,7 +137,7 @@ def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, s
 
 
 max_count = 10
-sleep_delay = 6
+sleep_delay = 12
 snapshot_sleep_delay = 300
 
 nb_daily_backups = 7

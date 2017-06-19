@@ -103,6 +103,7 @@ def timedelta_total_seconds(timedelta):
 
 def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, sleep_delay, max_count):
    is_attached=False
+   result = "no result"
    while (not is_attached and device_letter < 'z'):
       last_device_ascii = ord(device_letter)
       last_device = "/dev/sd%s" % chr(last_device_ascii)
