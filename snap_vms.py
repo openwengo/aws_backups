@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import boto
 import boto.ec2
+import boto3
 import sys
 import re
 import datetime
@@ -265,25 +266,22 @@ if len(volumes_list) > 0 :
                   sys.exit(0)
       if v.size < src_volume_size_gb:
          print('Volume is too small! ' + str(v.size) + 'GB vs ' + str(src_volume_size_gb) + ' Required')
-         enlarge_snap = create_snapshot_and_wait(ebs_volume, "Temporary snapshot of volume %s of host %s" % ( src_volume, src_host ), {"src_host":src_host, "src_volume":src_volume, "wg_entity":wg_entity }, (snapshot_sleep_delay / 10) + 1, snapshot_sleep_delay * 10)
-         if ( enlarge_snap.status != 'completed' ):
-          print("ERROR: Snapshot is not finished after " + str( snapshot_sleep_delay * 10 ) + " seconds. Bail out")
-          sys.exit(8)
-         ebs_new_volume = ec2_conn.create_volume(size=src_volume_size_gb, zone= my_instance.placement, volume_type='standard', encrypted=True, snapshot = enlarge_snap )
-         print('Ebs ' + ebs_new_volume.id + ' created as a resize of ' + ebs_volume.id)
-         ec2_conn.create_tags([ebs_new_volume.id], ebs_volume.tags )
          i = 0
-         while ebs_new_volume.status != "available":
+         ec2_client = boto3.client('ec2')
+         response = ec2_client.modify_volume(DryRun=False, VolumeId=v.id, Size=src_volume_size_gb)
+         volume_modification=response['VolumeModification']
+         progress = int(volume_modification['Progress'])
+         
+         ebs_volume.update()
+         while ebs_volume.status != "available":
             if i > max_count * 10:
                break
             time.sleep(sleep_delay)
-            ebs_new_volume.update()
+            ebs_volume.update()
             i+=1
-         if ebs_new_volume.status != "available":
-            print("ERROR: Volume " + ebs_new_volume.id + " unavailable after " + str(sleep_delay * max_count * 10) + " seconds. Exit\n")
+         if ebs_volume.status != "available":
+            print("ERROR: Volume " + ebs_volume.id + " unavailable after " + str(sleep_delay * max_count * 10) + " seconds. Exit\n")
             sys.exit(6)
-         ec2_conn.delete_volume(ebs_volume.id)
-         ebs_volume = ebs_new_volume
 
 else:
    print('No ebs volume found for ' + src_host + ' - ' + src_volume + ' in az ' + my_instance.placement + '\n')
