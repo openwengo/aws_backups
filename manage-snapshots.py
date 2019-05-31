@@ -28,7 +28,17 @@ def compare_amis(ami1,ami2):
 def generate_image(ec2_conn,instance, period, today, wg_entity):
    inst_name =  instance.tags[u'Name']
    img_name = "wengo-%s-%s-%s" % ( inst_name, period, today.strftime("%d-%m-%Y"))
-   img_id = ec2_conn.create_image(instance_id = instance.id, name = img_name, description = img_name , no_reboot = True, block_device_mapping = None, dry_run = False )
+   bdm = None
+   bdm2 = boto.ec2.blockdevicemapping.BlockDeviceMapping()
+   if 'backup_disks' in instance.tags:
+     backup_disks=instance.tags[u'backup_disks'].split(',')
+     bdm=instance.get_attribute('blockDeviceMapping')
+     for disk in list(bdm[u'blockDeviceMapping'].keys()):
+       if disk not in backup_disks:
+         print('suppress %s for image' % disk )
+         bdm2[disk]=boto.ec2.blockdevicemapping.BlockDeviceType(no_device=True)
+     bdm=bdm2
+   img_id = ec2_conn.create_image(instance_id = instance.id, name = img_name, description = img_name , no_reboot = True, block_device_mapping = bdm, dry_run = False )
    ec2_conn.create_tags([img_id], {'wg_entity': wg_entity, 'instance': inst_name, 'period': period })
    return img_id
 
