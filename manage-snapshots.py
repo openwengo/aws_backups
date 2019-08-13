@@ -9,6 +9,7 @@ from config import config
 import dateutil
 import dateutil.parser
 import pytz
+import time
 
 def get_snapshots4ami(snapshots_list, ami):
    snap_list = []
@@ -39,6 +40,8 @@ def generate_image(ec2_conn,instance, period, today, wg_entity):
          bdm2[disk]=boto.ec2.blockdevicemapping.BlockDeviceType(no_device=True)
      bdm=bdm2
    img_id = ec2_conn.create_image(instance_id = instance.id, name = img_name, description = img_name , no_reboot = True, block_device_mapping = bdm, dry_run = False )
+   print("img_id %s created. Apply tags wg_entity: %s, instance: %s, period: %s on it" % ( img_id, wg_entity, inst_name, period ))
+   time.sleep(10) # sometimes create_tags fails because the ami does not exists!?..
    ec2_conn.create_tags([img_id], {'wg_entity': wg_entity, 'instance': inst_name, 'period': period })
    return img_id
 
