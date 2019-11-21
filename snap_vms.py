@@ -320,7 +320,7 @@ if not ebs_device:
    (last_device_ascii, last_device) =  attach_volume_at_letter_or_more(ebs_volume, my_instance_id, chr(last_device_ascii), sleep_delay, max_count)
 
 # set read large read ahead
-status=subprocess.call(["blockdev","--set-ra","2048","/dev/sd%s" % chr(last_device_ascii)])
+status=subprocess.call(["blockdev","--setra","2048","/dev/sd%s" % chr(last_device_ascii)])
 sync_status=-1
 if 1:
    print("Calling sync_block.sh\n")
