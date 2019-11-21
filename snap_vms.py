@@ -319,6 +319,8 @@ for device, ebs in iter(sorted(my_instance.block_device_mapping.items())):
 if not ebs_device:
    (last_device_ascii, last_device) =  attach_volume_at_letter_or_more(ebs_volume, my_instance_id, chr(last_device_ascii), sleep_delay, max_count)
 
+# set read large read ahead
+status=subprocess.call(["blockdev","--set-ra","2048","/dev/sd%s" % chr(last_device_ascii)])
 sync_status=-1
 if 1:
    print("Calling sync_block.sh\n")
@@ -328,9 +330,9 @@ if 1:
    with GracefulInterruptHandler(sig = signal.SIGINT) as h:
       with GracefulInterruptHandler(sig = signal.SIGTERM) as h2:
          if is_new_volume:
-            sync_status=subprocess.call(["clone_vm_from_host.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--vm-name","na"]) #,"--remote-snap-size",remote_snap_size])
+            sync_status=subprocess.call(["clone_vm_from_host.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","sd%s" % chr(last_device_ascii),"--vm-name","na"]) #,"--remote-snap-size",remote_snap_size])
          else:
-            sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","xvd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
+            sync_status=subprocess.call(["sync_block.sh","--src-host",src_host,"--src-volume",src_volume,"--dst-volume","sd%s" % chr(last_device_ascii),"--remote-snap-size",remote_snap_size])
          if h2.interrupted:
              print("ERROR: Sync interrupted! (TERM)")
              ec2_conn.create_tags([ebs_volume.id], {"last_sync_status":-3})
