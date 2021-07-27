@@ -98,14 +98,31 @@ else:
 
 ec2_conn = conn
 
-instances_list = ec2_conn.get_only_instances()
+#instances_list = ec2_conn.get_only_instances()
 
 images_list = ec2_conn.get_all_images( owners = 'self' )
 
 snapshots_list = ec2_conn.get_all_snapshots( owner = 'self' )
 
+dict_images={}
+for image in images_list:
+  dict_images[image.id] = image
 #print instances_list
 today = datetime.datetime.now(pytz.utc)
+for snap in snapshots_list:
+  #list_matches = re.findall(r'Created by CreateImage\((.*)\) for (ami-[^ ]*) from vol-[a-z0-9]*$' , snap.description)
+  list_matches = re.findall(r'Created by CreateImage\((.*)\) for (ami-[^ ]*)$' , snap.description)
+  if (len(list_matches) == 1):
+     (instance_id, ami_id) = list_matches[0]
+     if ami_id in dict_images:
+        print("ok",snap.id,snap.description,instance_id, ami_id)
+     else:
+        print("ko",snap.id,snap.description,instance_id, ami_id)
+        print("Remove snapshot", snap.id)
+        snap.delete()
+
+sys.exit(0)
+  
 for instance in instances_list:
   print "Instance %s was launched at %s and has tags " % ( instance.id , instance.launch_time )
   inst_name = "none"
