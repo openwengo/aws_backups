@@ -135,6 +135,9 @@ for instance in instances_list:
          # ignore failed amis
          if image.state == "failed":
             continue
+         if not image.description:
+            continue
+         print("wengo-%s-(daily|weekly|monthly)-(.*)$" % inst_name, image.description)
          m = re.match("wengo-%s-(daily|weekly|monthly)-(.*)$" % inst_name, image.description )
          if m:
            date_diff = (today - dateutil.parser.parse(image.creationDate)).days
