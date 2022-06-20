@@ -105,7 +105,9 @@ def timedelta_total_seconds(timedelta):
 def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, sleep_delay, max_count):
    is_attached=False
    result = "no result"
-   while (not is_attached and device_letter < 'z'):
+   max_tries=20
+   tries=0
+   while (not is_attached and device_letter < 'z' and tries < max_tries):
       last_device_ascii = ord(device_letter)
       last_device = "/dev/sd%s" % chr(last_device_ascii)
       print("Attach " + ebs_volume.id + " to " + last_device )
@@ -115,6 +117,7 @@ def attach_volume_at_letter_or_more(ebs_volume, my_instance_id, device_letter, s
       except boto.exception.EC2ResponseError as e:
          if "is already in use" in e.error_message:
             device_letter = chr(last_device_ascii + 1)
+      tries += 1
    ebs_device = last_device
    if not is_attached:
       print("ERROR: Volume attach failed with result: " + result + " Bailing out.\n")
